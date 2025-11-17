@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>互動對稱繪圖</title>
+<style>
+    body {
+        font-family: 'Helvetica Neue', 'Helvetica', 'Arial', 'sans-serif';
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        margin: 0;
+        background-color: #1a1a1a;
+        color: #e0e0e0;
+        overflow: hidden; /* 避免 SVG 造成滾動條 */
+    }
+    #controls {
+        margin-bottom: 20px;
+        display: flex;
+        gap: 10px;
+    }
+    button {
+        padding: 10px 20px;
+        font-size: 16px;
+        cursor: pointer;
+        background-color: #00aaff;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        transition: background-color 0.3s, box-shadow 0.3s;
+    }
+    button:hover {
+        background-color: #0088cc;
+        box-shadow: 0 0 10px #00aaff;
+    }
+    button:disabled {
+        background-color: #555;
+        cursor: not-allowed;
+    }
+    #canvasContainer {
+        position: relative;
+    }
+    #drawingCanvas {
+        border: 2px solid #00aaff;
+        cursor: crosshair;
+        background-color: #000;
+        position: relative;
+        z-index: 1;
+    }
+    #message {
+        margin-top: 15px;
+        font-size: 18px;
+        color: #00ffcc;
+        text-shadow: 0 0 5px #00ffcc;
+    }
+    #svgContainer {
+        position: absolute;
+        top: 0;
+        left: 0;
+        pointer-events: none; /* 讓滑鼠事件穿透 SVG 到 Canvas */
+        z-index: 2;
+    }
+    .cyberpunk-glow {
+        stroke-width: 2;
+        animation: cyberpunk-flicker 1.5s infinite;
+    }
+    @keyframes cyberpunk-flicker {
+        0%, 100% {
+            stroke: #00ffcc;
+            filter: drop-shadow(0 0 2px #00ffcc) drop-shadow(0 0 5px #00ffcc) drop-shadow(0 0 10px #00ffcc);
+        }
+        50% {
+            stroke: #ffffff;
+            filter: drop-shadow(0 0 5px #ffffff) drop-shadow(0 0 10px #ffffff);
+        }
+    }
+</style>
+</head>
+<body>
+
+<div id="controls">
+    <button id="setAxisBtn">第一步：設定對稱軸</button>
+    <button id="reset">重設</button>
+</div>
+
+<div id="canvasContainer">
+    <canvas id="drawingCanvas" width="800" height="600"></canvas>
+    <svg id="svgContainer" width="800" height="600"></svg>
+</div>
+
+
+<div id="message">請點擊「設定對稱軸」按鈕，然後在畫布上拖曳來畫出對稱軸。</div>
+
+<script>
+    const canvas = document.getElementById('drawingCanvas');
+    const ctx = canvas.getContext('2d');
+    const setAxisBtn = document.getElementById('setAxisBtn');
+    const resetBtn = document.getElementById('reset');
+    const messageDiv = document.getElementById('message');
+    const svgContainer = document.getElementById('svgContainer');
+
+    let mode = 'wait'; // 'wait', 'settingAxis', 'drawing'
+    let axisStart = null;
+    let axisEnd = null;
+    let isDrawing = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    function getMousePos(canvas, evt) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+            x: evt.clientX - rect.left,
+            y: evt.clientY - rect.top
+        };
+    }
+    
+    // 繪製最終的、帶有閃爍效果的對稱軸
+    function drawFinalAxis() {
+        if (!axisStart || !axisEnd) return;
+        
+        svgContainer.innerHTML = ''; // 清除舊的 SVG 線條
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute('x1', axisStart.x);
+        line.setAttribute('y1', axisStart.y);
+        line.setAttribute('x2', axisEnd.x);
+        line.setAttribute('y2', axisEnd.y);
+        line.setAttribute('class', 'cyberpunk-glow');
+        
+        svgContainer.appendChild(line);
+    }
+
+    function reflectPoint(p, a, b) {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        if (dx === 0 && dy === 0) return p;
+        const a_dot_p = (p.x - a.x) * dx + (p.y - a.y) * dy;
+        const a_dot_a = dx * dx + dy * dy;
+        const t = a_dot_p / a_dot_a;
+        const closestPoint = {
+            x: a.x + t * dx,
+            y: a.y + t * dy
+        };
+        const reflectedPoint = {
+            x: 2 * closestPoint.x - p.x,
+            y: 2 * closestPoint.y - p.y
+        };
+        return reflectedPoint;
+    }
+    
+    // 主繪圖函數
+    function drawSymmetric(e) {
+        if (!isDrawing) return;
+        const pos = getMousePos(canvas, e);
+
+        ctx.beginPath();
+        ctx.moveTo(lastX, lastY);
+        ctx.lineTo(pos.x, pos.y);
+        ctx.stroke();
+
+        const reflectedStart = reflectPoint({x: lastX, y: lastY}, axisStart, axisEnd);
+        const reflectedEnd = reflectPoint(pos, axisStart, axisEnd);
+
+        ctx.beginPath();
+        ctx.moveTo(reflectedStart.x, reflectedStart.y);
+        ctx.lineTo(reflectedEnd.x, reflectedEnd.y);
+        ctx.stroke();
+
+        [lastX, lastY] = [pos.x, pos.y];
+    }
+    
+    setAxisBtn.addEventListener('click', () => {
+        mode = 'settingAxis';
+        setAxisBtn.disabled = true;
+        messageDiv.textContent = '請在畫布上按住並拖曳滑鼠來畫出對稱軸。';
+        canvas.style.cursor = 'crosshair';
+    });
+    
+    resetBtn.addEventListener('click', () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        svgContainer.innerHTML = '';
+        axisStart = null;
+        axisEnd = null;
+        setAxisBtn.disabled = false;
+        mode = 'wait';
+        messageDiv.textContent = '請點擊「設定對稱軸」按鈕，然後在畫布上拖曳來畫出對稱軸。';
+        canvas.style.cursor = 'default';
+    });
+
+    // 設定對稱軸的事件
+    canvas.addEventListener('mousedown', (e) => {
+        if (mode !== 'settingAxis') return;
+        isDrawing = true;
+        axisStart = getMousePos(canvas, e);
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+        if (mode === 'settingAxis' && isDrawing) {
+            const currentPos = getMousePos(canvas, e);
+            // 畫預覽線
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // 清除舊的預覽
+            ctx.beginPath();
+            ctx.moveTo(axisStart.x, axisStart.y);
+            ctx.lineTo(currentPos.x, currentPos.y);
+            ctx.strokeStyle = '#888'; // 預覽線用灰色
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.strokeStyle = '#FFFFFF'; // 還原畫筆顏色
+            ctx.lineWidth = 2;
+        } else if (mode === 'drawing') {
+            drawSymmetric(e);
+        }
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+        if (mode === 'settingAxis') {
+            isDrawing = false;
+            axisEnd = getMousePos(canvas, e);
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // 清除預覽線
+            drawFinalAxis(); // 繪製最終的閃爍軸
+            mode = 'drawing';
+            messageDiv.textContent = '對稱軸已設定！現在您可以在畫布的任一側開始繪圖。';
+        } else if (mode === 'drawing') {
+            isDrawing = false;
+        }
+    });
+    
+    // 主繪圖的啟動與停止
+    canvas.addEventListener('mousedown', (e) => {
+        if (mode !== 'drawing') return;
+        isDrawing = true;
+        const pos = getMousePos(canvas, e);
+        [lastX, lastY] = [pos.x, pos.y];
+    });
+
+    canvas.addEventListener('mouseout', () => {
+        if (mode === 'drawing') {
+            isDrawing = false;
+        }
+    });
+
+    // 初始化畫筆樣式
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+</script>
+</body>
+</html>
